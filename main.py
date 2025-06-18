@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
-import openai
 import os
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -13,7 +13,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 print("DISCORD_TOKEN:", DISCORD_TOKEN)
 print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-openai.api_key = OPENAI_API_KEY
+# OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -32,10 +33,10 @@ STAFF_ROLE_IDS = {
 }
 warning_counts = {}  # key: user_id, value: int (warning count)
 
-# Moderation logic
+# Moderation logic (using new OpenAI client)
 async def moderate_message(message_content):
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {
@@ -61,13 +62,16 @@ async def moderate_message(message_content):
 @bot.event
 async def on_ready():
     print(f"✅ Bot connected as {bot.user}")
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Activity(type=discord.ActivityType.watching, name="for hate speech 👀")
+    )
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # Whitelist: skip staff
     if any(role.id in STAFF_ROLE_IDS for role in message.author.roles):
         return
 
@@ -103,7 +107,7 @@ async def warn_user(member, guild):
     try:
         await member.send(f"⚠️ You have been warned for violating server rules. Warning {warnings}/3.")
     except:
-        pass  # DM might be closed
+        pass
 
     if warnings >= 3:
         try:
@@ -114,7 +118,7 @@ async def warn_user(member, guild):
                         await member.remove_roles(role)
                 await member.add_roles(jail_role)
                 await member.send("🚨 You have been jailed for repeated rule violations.")
-                warning_counts[user_id] = 0  # Reset after jail
+                warning_counts[user_id] = 0
         except discord.Forbidden:
             print("⚠️ Missing permission to modify roles.")
 
