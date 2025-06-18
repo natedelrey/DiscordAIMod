@@ -1,0 +1,2 @@
+# blmaibot
+moderate discord server
