@@ -84,20 +84,19 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    if any(role.id in STAFF_ROLE_IDS for role in message.author.roles):
-        return
-
     verdict = await moderate_message(message.content)
 
-    if verdict == "DELETE":
+    # Only delete + warn if the user is NOT staff
+    if verdict == "DELETE" and not any(role.id in STAFF_ROLE_IDS for role in message.author.roles):
         try:
             await message.delete()
             await log_violation(message)
             await warn_user(message.author, message.guild)
         except discord.Forbidden:
             print("⚠️ Missing permissions to delete message or manage roles.")
-    else:
-        await bot.process_commands(message)
+
+    # Always allow command processing
+    await bot.process_commands(message)
 
 @bot.event
 async def on_member_join(member):
