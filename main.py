@@ -154,10 +154,17 @@ async def summarize(ctx, limit: int = 20):
         await ctx.send("❌ You can only summarize up to 100 messages at a time.")
         return
 
-    messages = await ctx.channel.history(limit=limit).flatten()
-    content_to_summarize = "\n".join([f"{msg.author.name}: {msg.content}" for msg in reversed(messages) if not msg.author.bot])
-
     try:
+        messages = [msg async for msg in ctx.channel.history(limit=limit)]
+        content_to_summarize = "\n".join([
+            f"{msg.author.name}: {msg.content}"
+            for msg in reversed(messages) if not msg.author.bot and msg.content
+        ])
+
+        if not content_to_summarize.strip():
+            await ctx.send("⚠️ No messages to summarize.")
+            return
+
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[
