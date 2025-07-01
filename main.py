@@ -49,7 +49,7 @@ def save_jailed_users(user_ids):
 async def moderate_message(message_content):
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-1106-preview",
             messages=[
                 {
                     "role": "system",
@@ -166,7 +166,7 @@ async def summarize(ctx, limit: int = 20):
             return
 
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4-1106-preview",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
                 {"role": "user", "content": content_to_summarize}
