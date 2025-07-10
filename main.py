@@ -18,7 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 print("DISCORD_TOKEN:", DISCORD_TOKEN)
 print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-openai.api_key = OPENAI_API_KEY
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -98,8 +98,8 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        response = client.chat.completions.create(
+            model="gpt-4",
             messages=[
                 {
                     "role": "system",
@@ -259,8 +259,8 @@ async def summarize(ctx, limit: int = 20):
             await ctx.send("⚠️ No messages to summarize.")
             return
 
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
+        response = client.chat.completions.create(
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
                 {"role": "user", "content": content}
