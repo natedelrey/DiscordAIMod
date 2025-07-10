@@ -101,15 +101,18 @@ async def moderate_message(message_content):
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict Discord moderation assistant for a Black Lives Matter server. "
-                        "Your job is to detect racism, slurs, hate speech, or subtle dog whistles."
+                        "You are a strict Discord moderation assistant. "
+                        "Only reply with DELETE or SAFE. DELETE if the message contains racism, hate speech, slurs, or offensive content. "
+                        "Otherwise, reply SAFE. Do not explain your answer."
                     )
                 },
                 {"role": "user", "content": message_content}
             ],
             temperature=0
         )
-        return response.choices[0].message.content.strip().upper()
+        verdict = response.choices[0].message.content.strip().upper()
+        print(f"🧠 Moderation Verdict: {verdict}")  # Debug line
+        return verdict
     except Exception as e:
         print(f"Moderation error: {e}")
         return "SAFE"
