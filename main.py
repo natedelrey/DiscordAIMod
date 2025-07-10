@@ -101,7 +101,7 @@ async def moderate_message(message_content):
         return "SAFE"
     try:
         response = client.chat.completions.create(
-            model="gpt-4-1106-preview",
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
@@ -262,7 +262,7 @@ async def summarize(ctx, limit: int = 20):
             return
 
         response = client.chat.completions.create(
-            model="gpt-4-1106-preview",
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
                 {"role": "user", "content": content}
