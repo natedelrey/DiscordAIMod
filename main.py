@@ -98,7 +98,7 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = openai.chat.completions.create(
+        response = await openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
@@ -112,7 +112,7 @@ async def moderate_message(message_content):
             ],
             temperature=0
         )
-        return response["choices"][0]["message"]["content"].strip().upper()
+        return response.choices[0].message.content.strip().upper()
     except Exception as e:
         print(f"Moderation error: {e}")
         return "SAFE"
@@ -257,7 +257,7 @@ async def summarize(ctx, limit: int = 20):
         if not content_to_summarize.strip():
             await ctx.send("⚠️ No messages to summarize.")
             return
-        response = openai.chat.completions.create(
+        response = await openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
@@ -265,7 +265,7 @@ async def summarize(ctx, limit: int = 20):
             ],
             temperature=0.5
         )
-        summary = response["choices"][0]["message"]["content"].strip()
+        summary = response.choices[0].message.content.strip()
         await ctx.send(f"📝 **Summary of the last {limit} messages:**\n{summary}")
     except Exception as e:
         await ctx.send("⚠️ Failed to summarize messages.")
