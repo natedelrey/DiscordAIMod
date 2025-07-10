@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import json
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import Column, String, Integer, select, delete
 
@@ -58,7 +58,11 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-bot.loop.run_until_complete(init_db())
+class MyBot(commands.Bot):
+    async def setup_hook(self):
+        await init_db()
+
+bot = MyBot(command_prefix="!", intents=intents)
 
 def is_staff(member):
     return any(role.id in STAFF_ROLE_IDS for role in member.roles)
@@ -124,6 +128,7 @@ async def on_ready():
         status=discord.Status.online,
         activity=discord.Activity(type=discord.ActivityType.watching, name="for hate speech 👀")
     )
+
 
 @bot.event
 async def on_message(message):
