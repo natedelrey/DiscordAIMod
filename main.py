@@ -30,9 +30,9 @@ STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
     1269504508912992328, 1279604226799964231, 1315356574356734064, 1269517409526616196
 }
-warning_counts = {}  # key: user_id, value: int (warning count)
+warning_counts = {}
+whitelist = []  # list of whitelisted words/phrases
 
-# Load/save jailed users
 JAILED_USERS_FILE = "jailed_users.json"
 
 def load_jailed_users():
@@ -46,7 +46,13 @@ def save_jailed_users(user_ids):
     with open(JAILED_USERS_FILE, "w") as f:
         json.dump(user_ids, f)
 
+def is_staff(member):
+    return any(role.id in STAFF_ROLE_IDS for role in member.roles)
+
 async def moderate_message(message_content):
+    for phrase in whitelist:
+        if phrase in message_content:
+            return "SAFE"
     try:
         response = client.chat.completions.create(
             model="gpt-4-1106-preview",
@@ -56,10 +62,10 @@ async def moderate_message(message_content):
                     "content": (
                         "You are a strict Discord moderation assistant for a Black Lives Matter server. "
                         "Your job is to detect racism, slurs, hate speech, or subtle dog whistles, especially ones meant to belittle or dismiss BLM. "
-                        "This includes terms like 'BLDM' (Black Lives Don't Matter), 'TND', 4chan-style phrases, mocking slogans like 'We wuz kings', or use of 'coon', 'chimp', 'monkey', etc. "
+                        "This includes terms like 'BLDM', 'TND', 'We wuz kings', or 'coon', 'chimp', 'monkey', etc. "
                         "You do not tolerate veiled bigotry, coded language, or edgy 'jokes' at the expense of Black communities. "
-                        "If the message is even *borderline offensive* or *deliberately provocative*, respond with 'DELETE'. Otherwise, respond with 'SAFE'. "
-                        "Respond only with 'SAFE' or 'DELETE' — no explanations."
+                        "If the message is even *borderline offensive*, respond with 'DELETE'. Otherwise, respond with 'SAFE'. "
+                        "Respond only with 'SAFE' or 'DELETE'."
                     )
                 },
                 {"role": "user", "content": message_content}
@@ -86,8 +92,7 @@ async def on_message(message):
 
     verdict = await moderate_message(message.content)
 
-    # Only delete + warn if the user is NOT staff
-    if verdict == "DELETE" and not any(role.id in STAFF_ROLE_IDS for role in message.author.roles):
+    if verdict == "DELETE" and not is_staff(message.author):
         try:
             await message.delete()
             await log_violation(message)
@@ -95,7 +100,6 @@ async def on_message(message):
         except discord.Forbidden:
             print("⚠️ Missing permissions to delete message or manage roles.")
 
-    # Always allow command processing
     await bot.process_commands(message)
 
 @bot.event
@@ -121,7 +125,7 @@ async def log_violation(message):
         await log_channel.send(embed=embed)
 
 async def warn_user(member, guild):
-    user_id = member.id
+    user_id = str(member.id)
     warning_counts[user_id] = warning_counts.get(user_id, 0) + 1
     warnings = warning_counts[user_id]
 
@@ -142,8 +146,8 @@ async def warn_user(member, guild):
                 warning_counts[user_id] = 0
 
                 jailed_users = load_jailed_users()
-                if str(user_id) not in jailed_users:
-                    jailed_users.append(str(user_id))
+                if user_id not in jailed_users:
+                    jailed_users.append(user_id)
                     save_jailed_users(jailed_users)
         except discord.Forbidden:
             print("⚠️ Missing permission to modify roles.")
@@ -181,7 +185,7 @@ async def summarize(ctx, limit: int = 20):
 
 @bot.command()
 async def dm(ctx, user: discord.User, *, message: str):
-    if not any(role.id in STAFF_ROLE_IDS for role in ctx.author.roles):
+    if not is_staff(ctx.author):
         await ctx.send("❌ You do not have permission to use this command.")
         return
 
@@ -191,6 +195,56 @@ async def dm(ctx, user: discord.User, *, message: str):
     except Exception as e:
         await ctx.send("⚠️ Failed to send the message.")
         print(f"DM error: {e}")
+
+@bot.command()
+async def whitelist_add(ctx, *, phrase):
+    if not is_staff(ctx.author):
+        return
+    if phrase not in whitelist:
+        whitelist.append(phrase)
+        await ctx.send(f"✅ Whitelisted: `{phrase}`")
+    else:
+        await ctx.send("Phrase is already whitelisted.")
+
+@bot.command()
+async def whitelist_remove(ctx, *, phrase):
+    if not is_staff(ctx.author):
+        return
+    if phrase in whitelist:
+        whitelist.remove(phrase)
+        await ctx.send(f"❌ Removed from whitelist: `{phrase}`")
+    else:
+        await ctx.send("Phrase not found in whitelist.")
+
+@bot.command()
+async def whitelist_list(ctx):
+    if not is_staff(ctx.author):
+        return
+    if not whitelist:
+        await ctx.send("⚠️ Whitelist is empty.")
+    else:
+        await ctx.send("📜 Whitelisted phrases:\n" + "\n".join(f"- {w}" for w in whitelist))
+
+@bot.command()
+async def commands(ctx):
+    cmds = [
+        "!summarize [#] - Summarize recent messages",
+        "!dm @user message - DM a user (staff only)",
+        "!whitelist add/remove/list - Manage AI ignore list (staff only)",
+        "!removewarnings @user - Reset warning count (staff only)"
+    ]
+    await ctx.send("📘 Available Commands:\n" + "\n".join(cmds))
+
+@bot.command()
+async def removewarnings(ctx, member: discord.Member):
+    if not is_staff(ctx.author):
+        return
+    user_id = str(member.id)
+    if user_id in warning_counts:
+        warning_counts[user_id] = 0
+        await ctx.send(f"✅ Warnings for {member.mention} have been cleared.")
+    else:
+        await ctx.send(f"ℹ️ {member.mention} has no warnings.")
 
 # Start the bot
 try:
