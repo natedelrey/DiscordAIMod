@@ -28,8 +28,6 @@ intents.guilds = True
 intents.members = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 LOG_CHANNEL_ID = 1384748303845167185
 JAIL_ROLE_ID = 1292210864128004147
 STAFF_ROLE_IDS = {
