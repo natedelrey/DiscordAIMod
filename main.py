@@ -28,6 +28,12 @@ intents.guilds = True
 intents.members = True
 intents.message_content = True
 
+class MyBot(commands.Bot):
+    async def setup_hook(self):
+        await init_db()
+
+bot = MyBot(command_prefix="!", intents=intents)
+
 LOG_CHANNEL_ID = 1384748303845167185
 JAIL_ROLE_ID = 1292210864128004147
 STAFF_ROLE_IDS = {
@@ -55,12 +61,6 @@ class WhitelistEntry(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-class MyBot(commands.Bot):
-    async def setup_hook(self):
-        await init_db()
-
-bot = MyBot(command_prefix="!", intents=intents)
 
 def is_staff(member):
     return any(role.id in STAFF_ROLE_IDS for role in member.roles)
@@ -233,6 +233,51 @@ async def whitelist_list(ctx):
         await ctx.send("📃 Whitelisted phrases:\n" + "\n".join(phrases))
 
 @bot.command()
+async def dm(ctx, user: discord.User, *, message: str):
+    if not is_staff(ctx.author):
+        await ctx.send("❌ You do not have permission to use this command.")
+        return
+    try:
+        await user.send(message)
+        await ctx.send(f"📬 Message sent to {user.mention}.")
+    except Exception as e:
+        await ctx.send("⚠️ Failed to send the message.")
+        print(f"DM error: {e}")
+
+@bot.command()
+async def summarize(ctx, limit: int = 20):
+    if not is_staff(ctx.author):
+        return
+    if limit > 100:
+        await ctx.send("❌ You can only summarize up to 100 messages.")
+        return
+
+    messages = [msg async for msg in ctx.channel.history(limit=limit)]
+    content = "\n".join([
+        f"{msg.author.display_name}: {msg.content}"
+        for msg in reversed(messages) if msg.content and not msg.author.bot
+    ])
+
+    if not content.strip():
+        await ctx.send("⚠️ No messages to summarize.")
+        return
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4-1106-preview",
+            messages=[
+                {"role": "system", "content": "Summarize the following Discord conversation."},
+                {"role": "user", "content": content}
+            ],
+            temperature=0.5
+        )
+        summary = response.choices[0].message.content.strip()
+        await ctx.send(f"📝 **Summary of last {limit} messages:**\n{summary}")
+    except Exception as e:
+        await ctx.send("⚠️ Failed to summarize.")
+        print(f"Summarize error: {e}")
+
+@bot.command()
 async def commands(ctx):
     if not is_staff(ctx.author):
         return
@@ -240,7 +285,9 @@ async def commands(ctx):
         "!removewarnings @user - reset warnings",
         "!whitelist_add [phrase]",
         "!whitelist_remove [phrase]",
-        "!whitelist_list"
+        "!whitelist_list",
+        "!dm @user [message]",
+        "!summarize [number_of_messages]"
     ]
     await ctx.send("🛠️ **Available Staff Commands:**\n" + "\n".join(cmds))
 
