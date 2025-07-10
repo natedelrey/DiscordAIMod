@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import os
-import openai
+from openai import OpenAI
 from dotenv import load_dotenv
 import json
 import asyncio
@@ -20,7 +20,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 print("DISCORD_TOKEN:", DISCORD_TOKEN)
 print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -100,7 +100,7 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[
                 {
@@ -261,7 +261,7 @@ async def summarize(ctx, limit: int = 20):
             await ctx.send("⚠️ No messages to summarize.")
             return
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4-1106-preview",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
