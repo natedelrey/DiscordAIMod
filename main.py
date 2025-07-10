@@ -26,8 +26,12 @@ intents.message_content = True
 class MyBot(commands.Bot):
     async def setup_hook(self):
         await init_db()
+        for command in [removewarnings, whitelist_add, whitelist_remove, whitelist_list, dm, summarize, commands]:
+            self.tree.add_command(command)
 
 bot = MyBot(command_prefix="!", intents=intents)
+
+debug_guilds = []  # optionally add your guild ID(s) here for faster dev
 
 LOG_CHANNEL_ID = 1384748303845167185
 JAIL_ROLE_ID = 1292210864128004147
@@ -101,18 +105,15 @@ async def moderate_message(message_content):
                 {
                     "role": "system",
                     "content": (
-                        "You are a strict Discord moderation assistant. "
-                        "Only reply with DELETE or SAFE. DELETE if the message contains racism, hate speech, slurs, or offensive content. "
-                        "Otherwise, reply SAFE. Do not explain your answer."
+                        "You are a strict Discord moderation assistant for a Black Lives Matter server. "
+                        "Your job is to detect racism, slurs, hate speech, or subtle dog whistles."
                     )
                 },
                 {"role": "user", "content": message_content}
             ],
             temperature=0
         )
-        verdict = response.choices[0].message.content.strip().upper()
-        print(f"🧠 Moderation Verdict: {verdict}")  # Debug line
-        return verdict
+        return response.choices[0].message.content.strip().upper()
     except Exception as e:
         print(f"Moderation error: {e}")
         return "SAFE"
@@ -124,6 +125,11 @@ async def on_ready():
         status=discord.Status.online,
         activity=discord.Activity(type=discord.ActivityType.watching, name="for hate speech 👀")
     )
+    try:
+        synced = await bot.tree.sync()
+        print(f"🔁 Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(f"❌ Failed to sync commands: {e}")
 
 @bot.event
 async def on_message(message):
@@ -188,74 +194,70 @@ async def warn_user(member, guild):
         except discord.Forbidden:
             print("⚠️ Missing permission to modify roles.")
 
-@bot.command()
-async def removewarnings(ctx, member: discord.Member):
-    if not is_staff(ctx.author):
-        return
-    await set_warnings(str(member.id), 0)
-    await ctx.send(f"✅ Warnings for {member.mention} have been cleared.")
+from discord import app_commands
 
-@bot.command()
-async def whitelist_add(ctx, *, phrase: str):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="removewarnings", description="Reset warnings for a user")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def removewarnings(interaction: discord.Interaction, member: discord.Member):
+    await set_warnings(str(member.id), 0)
+    await interaction.response.send_message(f"✅ Warnings for {member.mention} have been cleared.", ephemeral=True)
+
+@app_commands.command(name="whitelist_add", description="Add a phrase to the whitelist")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def whitelist_add(interaction: discord.Interaction, phrase: str):
     async with AsyncSessionLocal() as session:
         if not await session.get(WhitelistEntry, phrase):
             session.add(WhitelistEntry(phrase=phrase))
             await session.commit()
-    await ctx.send(f"✅ Added '{phrase}' to the whitelist.")
+    await interaction.response.send_message(f"✅ Added '{phrase}' to the whitelist.", ephemeral=True)
 
-@bot.command()
-async def whitelist_remove(ctx, *, phrase: str):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="whitelist_remove", description="Remove a phrase from the whitelist")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def whitelist_remove(interaction: discord.Interaction, phrase: str):
     async with AsyncSessionLocal() as session:
         result = await session.get(WhitelistEntry, phrase)
         if result:
             await session.delete(result)
             await session.commit()
-            await ctx.send(f"✅ Removed '{phrase}' from the whitelist.")
+            await interaction.response.send_message(f"✅ Removed '{phrase}' from the whitelist.", ephemeral=True)
         else:
-            await ctx.send("⚠️ That phrase isn't in the whitelist.")
+            await interaction.response.send_message("⚠️ That phrase isn't in the whitelist.", ephemeral=True)
 
-@bot.command()
-async def whitelist_list(ctx):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="whitelist_list", description="List all whitelisted phrases")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def whitelist_list(interaction: discord.Interaction):
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(WhitelistEntry))
         phrases = [row[0].phrase for row in result.all()]
     if not phrases:
-        await ctx.send("⚠️ Whitelist is currently empty.")
+        await interaction.response.send_message("⚠️ Whitelist is currently empty.", ephemeral=True)
     else:
-        await ctx.send("📃 Whitelisted phrases:\n" + "\n".join(phrases))
+        await interaction.response.send_message("📃 Whitelisted phrases:\n" + "\n".join(phrases), ephemeral=True)
 
-@bot.command()
-async def dm(ctx, user: discord.User, *, message: str):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="dm", description="Send a DM to a user")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def dm(interaction: discord.Interaction, user: discord.User, message: str):
     try:
         await user.send(message)
-        await ctx.send(f"📬 Message sent to {user.mention}.")
+        await interaction.response.send_message(f"📬 Message sent to {user.mention}.", ephemeral=True)
     except Exception as e:
-        await ctx.send("⚠️ Failed to send the message.")
+        await interaction.response.send_message("⚠️ Failed to send the message.", ephemeral=True)
         print(f"DM error: {e}")
 
-@bot.command()
-async def summarize(ctx, limit: int = 20):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="summarize", description="Summarize recent messages in the channel")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def summarize(interaction: discord.Interaction, limit: int = 20):
     if limit > 100:
-        await ctx.send("❌ You can only summarize up to 100 messages at a time.")
+        await interaction.response.send_message("❌ You can only summarize up to 100 messages at a time.", ephemeral=True)
         return
     try:
-        messages = [msg async for msg in ctx.channel.history(limit=limit)]
+        messages = [msg async for msg in interaction.channel.history(limit=limit)]
         content_to_summarize = "\n".join([
             f"{msg.author.name}: {msg.content}"
             for msg in reversed(messages) if not msg.author.bot and msg.content
         ])
         if not content_to_summarize.strip():
-            await ctx.send("⚠️ No messages to summarize.")
+            await interaction.response.send_message("⚠️ No messages to summarize.", ephemeral=True)
             return
         response = await openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -266,24 +268,23 @@ async def summarize(ctx, limit: int = 20):
             temperature=0.5
         )
         summary = response.choices[0].message.content.strip()
-        await ctx.send(f"📝 **Summary of the last {limit} messages:**\n{summary}")
+        await interaction.response.send_message(f"📝 **Summary of the last {limit} messages:**\n{summary}", ephemeral=True)
     except Exception as e:
-        await ctx.send("⚠️ Failed to summarize messages.")
+        await interaction.response.send_message("⚠️ Failed to summarize messages.", ephemeral=True)
         print("Summary error:", e)
 
-@bot.command()
-async def commands(ctx):
-    if not is_staff(ctx.author):
-        return
+@app_commands.command(name="commands", description="List available staff commands")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def commands(interaction: discord.Interaction):
     cmds = [
-        "!removewarnings @user - reset warnings",
-        "!whitelist_add [phrase]",
-        "!whitelist_remove [phrase]",
-        "!whitelist_list",
-        "!dm @user [message]",
-        "!summarize [# of messages]"
+        "/removewarnings @user - reset warnings",
+        "/whitelist_add phrase",
+        "/whitelist_remove phrase",
+        "/whitelist_list",
+        "/dm @user message",
+        "/summarize [# of messages]"
     ]
-    await ctx.send("🛠️ **Available Staff Commands:**\n" + "\n".join(cmds))
+    await interaction.response.send_message("🛠️ **Available Staff Commands:**\n" + "\n".join(cmds), ephemeral=True)
 
 try:
     bot.run(DISCORD_TOKEN)
