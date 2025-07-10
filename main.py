@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 import os
-import openai
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -10,15 +10,12 @@ from sqlalchemy import Column, String, Integer, select
 
 # Load environment variables
 load_dotenv()
-print("Loaded .env")
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
-print("DISCORD_TOKEN:", DISCORD_TOKEN)
-print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-openai.api_key = OPENAI_API_KEY
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -98,7 +95,7 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = await openai.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
@@ -257,7 +254,7 @@ async def summarize(ctx, limit: int = 20):
         if not content_to_summarize.strip():
             await ctx.send("⚠️ No messages to summarize.")
             return
-        response = await openai.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
