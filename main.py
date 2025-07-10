@@ -127,7 +127,6 @@ async def on_ready():
         activity=discord.Activity(type=discord.ActivityType.watching, name="for hate speech 👀")
     )
 
-
 @bot.event
 async def on_message(message):
     if message.author.bot:
