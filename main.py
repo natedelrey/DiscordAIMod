@@ -18,7 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 print("DISCORD_TOKEN:", DISCORD_TOKEN)
 print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -98,8 +98,8 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
@@ -112,7 +112,7 @@ async def moderate_message(message_content):
             ],
             temperature=0
         )
-        return response.choices[0].message.content.strip().upper()
+        return response["choices"][0]["message"]["content"].strip().upper()
     except Exception as e:
         print(f"Moderation error: {e}")
         return "SAFE"
@@ -231,14 +231,15 @@ async def whitelist_list(ctx):
         await ctx.send("📃 Whitelisted phrases:\n" + "\n".join(phrases))
 
 @bot.command()
-async def dm(ctx, member: discord.Member, *, message: str):
+async def dm(ctx, user: discord.User, *, message: str):
     if not is_staff(ctx.author):
         return
     try:
-        await member.send(message)
-        await ctx.send(f"📩 Sent message to {member.mention}.")
-    except:
+        await user.send(message)
+        await ctx.send(f"📬 Message sent to {user.mention}.")
+    except Exception as e:
         await ctx.send("⚠️ Failed to send the message.")
+        print(f"DM error: {e}")
 
 @bot.command()
 async def summarize(ctx, limit: int = 20):
@@ -247,30 +248,28 @@ async def summarize(ctx, limit: int = 20):
     if limit > 100:
         await ctx.send("❌ You can only summarize up to 100 messages at a time.")
         return
-
     try:
         messages = [msg async for msg in ctx.channel.history(limit=limit)]
-        content = "\n".join([
+        content_to_summarize = "\n".join([
             f"{msg.author.name}: {msg.content}"
             for msg in reversed(messages) if not msg.author.bot and msg.content
         ])
-
-        if not content.strip():
+        if not content_to_summarize.strip():
             await ctx.send("⚠️ No messages to summarize.")
             return
-
-        response = client.chat.completions.create(
-            model="gpt-4",
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
-                {"role": "user", "content": content}
-            ]
+                {"role": "user", "content": content_to_summarize}
+            ],
+            temperature=0.5
         )
-        summary = response.choices[0].message.content.strip()
+        summary = response["choices"][0]["message"]["content"].strip()
         await ctx.send(f"📝 **Summary of the last {limit} messages:**\n{summary}")
     except Exception as e:
-        print("Summary error:", e)
         await ctx.send("⚠️ Failed to summarize messages.")
+        print("Summary error:", e)
 
 @bot.command()
 async def commands(ctx):
@@ -281,8 +280,8 @@ async def commands(ctx):
         "!whitelist_add [phrase]",
         "!whitelist_remove [phrase]",
         "!whitelist_list",
-        "!dm @user [message] - send DM",
-        "!summarize [# messages] - summarize recent chat"
+        "!dm @user [message]",
+        "!summarize [# of messages]"
     ]
     await ctx.send("🛠️ **Available Staff Commands:**\n" + "\n".join(cmds))
 
