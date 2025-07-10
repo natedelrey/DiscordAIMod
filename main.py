@@ -132,6 +132,10 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    if message.content.startswith(bot.command_prefix):
+        await bot.process_commands(message)
+        return
+
     verdict = await moderate_message(message.content)
 
     if verdict == "DELETE" and not is_staff(message.author):
