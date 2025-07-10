@@ -98,7 +98,7 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
@@ -257,7 +257,7 @@ async def summarize(ctx, limit: int = 20):
         if not content_to_summarize.strip():
             await ctx.send("⚠️ No messages to summarize.")
             return
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
