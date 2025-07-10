@@ -3,12 +3,10 @@ from discord.ext import commands
 import os
 import openai
 from dotenv import load_dotenv
-import json
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Column, String, Integer, select, delete
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, String, Integer, select
 
 # Load environment variables
 load_dotenv()
@@ -20,7 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 print("DISCORD_TOKEN:", DISCORD_TOKEN)
 print("OPENAI_API_KEY:", OPENAI_API_KEY)
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -100,14 +98,14 @@ async def moderate_message(message_content):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
                     "content": (
                         "You are a strict Discord moderation assistant for a Black Lives Matter server. "
-                        "Your job is to detect racism, slurs, hate speech, or subtle dog whistles..."
+                        "Your job is to detect racism, slurs, hate speech, or subtle dog whistles."
                     )
                 },
                 {"role": "user", "content": message_content}
@@ -261,7 +259,7 @@ async def summarize(ctx, limit: int = 20):
             await ctx.send("⚠️ No messages to summarize.")
             return
 
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
