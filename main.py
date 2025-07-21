@@ -107,7 +107,7 @@ async def moderate_message(message_content):
                     "content": (
                         "You are a strict and unforgiving AI content moderation system designed for a Discord server. "
                         "You must detect and flag **any** instance of: racism, hate speech, slurs (explicit or censored), ableism, transphobia, homophobia, sexism, harassment, dog whistles, threats, incitement, or targeted bullying. "
-                        "Be aware that some users may attempt to bypass filters using creative spelling, slang, coded language, acronyms, emojis, or implied context."
+                        "Some users may attempt to bypass filters using creative spelling, slang, coded language, acronyms, emojis, or implied context."
                         "If the message is at all harmful or disrespectful, respond with 'DELETE'. Otherwise, respond only with 'SAFE'. "
                         "Do NOT explain your response or include anything other than 'DELETE' or 'SAFE'."
                     )
