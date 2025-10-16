@@ -26,7 +26,18 @@ intents.message_content = True
 class MyBot(commands.Bot):
     async def setup_hook(self):
         await init_db()
-        for command in [removewarnings, whitelist_add, whitelist_remove, whitelist_list, dm, summarize, commands]:
+        for command in [
+            removewarnings,
+            whitelist_add,
+            whitelist_remove,
+            whitelist_list,
+            dm,
+            summarize,
+            commands,
+            exempt,
+            exemptremove,
+            exempts_list,
+        ]:
             self.tree.add_command(command)
 
 bot = MyBot(command_prefix="!", intents=intents)
@@ -56,6 +67,10 @@ class Warning(Base):
 class WhitelistEntry(Base):
     __tablename__ = 'whitelist'
     phrase = Column(String, primary_key=True)
+
+class ExemptUser(Base):
+    __tablename__ = 'exempt_users'
+    user_id = Column(String, primary_key=True)
 
 async def init_db():
     async with engine.begin() as conn:
@@ -95,29 +110,58 @@ async def is_whitelisted(message_content):
         phrases = [row[0].phrase for row in result.all()]
         return any(phrase in message_content for phrase in phrases)
 
-async def moderate_message(message_content):
+async def is_exempt(user_id):
+    async with AsyncSessionLocal() as session:
+        return await session.get(ExemptUser, user_id) is not None
+
+async def add_exempt_user(user_id):
+    async with AsyncSessionLocal() as session:
+        if not await session.get(ExemptUser, user_id):
+            session.add(ExemptUser(user_id=user_id))
+            await session.commit()
+
+async def remove_exempt_user(user_id):
+    async with AsyncSessionLocal() as session:
+        record = await session.get(ExemptUser, user_id)
+        if record:
+            await session.delete(record)
+            await session.commit()
+
+async def list_exempt_users():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(ExemptUser))
+        return [row[0].user_id for row in result.all()]
+
+async def moderate_message(message_content, *, lenient=False):
     if await is_whitelisted(message_content):
         return "SAFE"
     try:
+        if lenient:
+            system_prompt = (
+                "You are an AI content moderation system for a Discord server.\n\n"
+                "Flag messages only when they contain explicit, unmistakable racist or hate-filled language.\n"
+                "Ignore mild profanity, jokes, or context unless the message clearly includes outright racism or hate speech.\n\n"
+                "If the message is explicitly racist or hate speech, respond only with: DELETE\n"
+                "If it is not, respond only with: SAFE\n"
+                "Do not explain your decision."
+            )
+        else:
+            system_prompt = (
+                "You are an AI content moderation system for a Discord server.\n\n"
+                "Flag messages that contain clear or strongly implied:\n"
+                "- Racism, hate speech, or slurs (even if censored)\n"
+                "- Ableism, transphobia, homophobia, or sexism\n"
+                "- Harassment, threats, incitement, or targeted bullying\n"
+                "- Known dog whistles or coded hate terms\n\n"
+                "Be alert for attempts to bypass filters using misspellings, emojis, slang, acronyms, or indirect phrasing — but do not flag unless the message is *reasonably likely* to be harmful or targeted.\n\n"
+                "If the message violates these guidelines, respond only with: DELETE\n"
+                "If it does not, respond only with: SAFE\n"
+                "Do not explain your decision."
+            )
         response = await openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are an AI content moderation system for a Discord server.\n\n"
-                        "Flag messages that contain clear or strongly implied:\n"
-                        "- Racism, hate speech, or slurs (even if censored)\n"
-                        "- Ableism, transphobia, homophobia, or sexism\n"
-                        "- Harassment, threats, incitement, or targeted bullying\n"
-                        "- Known dog whistles or coded hate terms\n\n"
-                        "Be alert for attempts to bypass filters using misspellings, emojis, slang, acronyms, or indirect phrasing — "
-                        "but do not flag unless the message is *reasonably likely* to be harmful or targeted.\n\n"
-                        "If the message violates these guidelines, respond only with: DELETE\n"
-                        "If it does not, respond only with: SAFE\n"
-                        "Do not explain your decision."
-                    )
-                },
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message_content}
             ],
             temperature=0
@@ -145,13 +189,16 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    verdict = await moderate_message(message.content)
+    user_id = str(message.author.id)
+    lenient = await is_exempt(user_id)
+    verdict = await moderate_message(message.content, lenient=lenient)
 
-    if verdict == "DELETE" and not is_staff(message.author):
+    if verdict == "DELETE":
         try:
             await message.delete()
             await log_violation(message)
-            await warn_user(message.author, message.guild)
+            if not is_staff(message.author):
+                await warn_user(message.author, message.guild)
         except discord.Forbidden:
             print("⚠️ Missing permissions to delete message or manage roles.")
 
@@ -291,9 +338,48 @@ async def commands(interaction: discord.Interaction):
         "/whitelist_remove phrase",
         "/whitelist_list",
         "/dm @user message",
-        "/summarize [# of messages]"
+        "/summarize [# of messages]",
+        "/exempt @user",
+        "/exemptremove @user",
+        "/exemtplist"
     ]
     await interaction.response.send_message("🛠️ **Available Staff Commands:**\n" + "\n".join(cmds), ephemeral=True)
+
+@app_commands.command(name="exempt", description="Give a user lenient moderation")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def exempt(interaction: discord.Interaction, member: discord.Member):
+    await add_exempt_user(str(member.id))
+    await interaction.response.send_message(
+        f"✅ {member.mention} will now only be flagged for explicit hate speech.",
+        ephemeral=True
+    )
+
+@app_commands.command(name="exemptremove", description="Remove a user's lenient moderation")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def exemptremove(interaction: discord.Interaction, member: discord.Member):
+    await remove_exempt_user(str(member.id))
+    await interaction.response.send_message(
+        f"✅ {member.mention} is now subject to normal moderation.",
+        ephemeral=True
+    )
+
+@app_commands.command(name="exemtplist", description="List users with lenient moderation")
+@app_commands.checks.has_any_role(*STAFF_ROLE_IDS)
+async def exempts_list(interaction: discord.Interaction):
+    user_ids = await list_exempt_users()
+    if not user_ids:
+        await interaction.response.send_message("ℹ️ No users are currently exempt.", ephemeral=True)
+        return
+
+    mentions = []
+    for user_id in user_ids:
+        member = interaction.guild.get_member(int(user_id)) if interaction.guild else None
+        mentions.append(member.mention if member else f"<@{user_id}>")
+
+    await interaction.response.send_message(
+        "📜 **Exempt Users:**\n" + "\n".join(mentions),
+        ephemeral=True
+    )
 
 try:
     bot.run(DISCORD_TOKEN)
