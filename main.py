@@ -240,9 +240,6 @@ async def warn_user(member, guild):
         try:
             jail_role = guild.get_role(JAIL_ROLE_ID)
             if jail_role:
-                for role in member.roles:
-                    if role != guild.default_role:
-                        await member.remove_roles(role)
                 await member.add_roles(jail_role)
                 await member.send("🚨 You have been jailed for repeated rule violations.")
                 await set_warnings(user_id, 0)
