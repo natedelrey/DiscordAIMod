@@ -189,6 +189,10 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    if is_staff(message.author):
+        await bot.process_commands(message)
+        return
+
     user_id = str(message.author.id)
     lenient = await is_exempt(user_id)
     verdict = await moderate_message(message.content, lenient=lenient)
