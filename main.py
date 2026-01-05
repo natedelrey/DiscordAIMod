@@ -313,6 +313,43 @@ async def request_jail_review(member, guild):
     else:
         await review_message.add_reaction("❌")
 
+async def close_jail_review_message(channel, message_id, moderator, decision):
+    try:
+        message = await channel.fetch_message(message_id)
+    except discord.NotFound:
+        return
+    close_text = f"Closed by {moderator.mention}, jailed deemed {decision}."
+    await message.edit(content=close_text, embed=None)
+    try:
+        await message.clear_reactions()
+    except discord.Forbidden:
+        pass
+
+async def bump_pending_jail_reviews(channel, guild):
+    if not pending_jail_reviews:
+        return
+    pending_items = list(pending_jail_reviews.items())
+    pending_jail_reviews.clear()
+    for message_id, user_id in pending_items:
+        try:
+            message = await channel.fetch_message(message_id)
+        except discord.NotFound:
+            continue
+        embed = message.embeds[0] if message.embeds else None
+        content = message.content if message.content else None
+        new_message = await channel.send(content=content, embed=embed)
+        pending_jail_reviews[new_message.id] = user_id
+        await new_message.add_reaction("✅")
+        disagree_emoji = discord.utils.get(guild.emojis, name="x_Disagree")
+        if disagree_emoji:
+            await new_message.add_reaction(disagree_emoji)
+        else:
+            await new_message.add_reaction("❌")
+        try:
+            await message.delete()
+        except discord.Forbidden:
+            pass
+
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     if payload.user_id == bot.user.id:
@@ -351,6 +388,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         except:
             pass
         pending_jail_reviews.pop(payload.message_id, None)
+        channel = bot.get_channel(payload.channel_id)
+        if channel:
+            await close_jail_review_message(channel, payload.message_id, member, "not warranted")
+            await bump_pending_jail_reviews(channel, guild)
     elif emoji_name in {"x_Disagree", "❌"}:
         try:
             await target_member.send(
@@ -360,6 +401,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         except:
             pass
         pending_jail_reviews.pop(payload.message_id, None)
+        channel = bot.get_channel(payload.channel_id)
+        if channel:
+            await close_jail_review_message(channel, payload.message_id, member, "correct")
+            await bump_pending_jail_reviews(channel, guild)
 
 from discord import app_commands
 
