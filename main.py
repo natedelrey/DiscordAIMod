@@ -46,6 +46,8 @@ debug_guilds = []  # optionally add your guild ID(s) here for faster dev
 
 LOG_CHANNEL_ID = 1384748303845167185
 JAIL_ROLE_ID = 1292210864128004147
+REVIEW_CHANNEL_ID = 1457762507484565687
+TICKET_CATEGORY_ID = 1364267276169121872
 STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
     1269504508912992328, 1279604226799964231, 1315356574356734064, 1269517409526616196
@@ -54,6 +56,9 @@ STAFF_ROLE_IDS = {
 Base = declarative_base()
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+flagged_messages = {}
+pending_jail_reviews = {}
 
 class JailedUser(Base):
     __tablename__ = 'jailed_users'
@@ -98,6 +103,13 @@ async def add_to_jailed(user_id):
     async with AsyncSessionLocal() as session:
         if not await session.get(JailedUser, user_id):
             session.add(JailedUser(user_id=user_id))
+            await session.commit()
+
+async def remove_from_jailed(user_id):
+    async with AsyncSessionLocal() as session:
+        record = await session.get(JailedUser, user_id)
+        if record:
+            await session.delete(record)
             await session.commit()
 
 async def is_jailed(user_id):
@@ -189,6 +201,14 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    if isinstance(message.channel, discord.TextChannel):
+        if (
+            message.channel.category_id == TICKET_CATEGORY_ID
+            and message.channel.name.startswith("ticket")
+        ):
+            await bot.process_commands(message)
+            return
+
     if is_staff(message.author):
         await bot.process_commands(message)
         return
@@ -221,6 +241,12 @@ async def on_member_join(member):
 
 async def log_violation(message):
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    user_id = str(message.author.id)
+    entry = f"#{message.channel} ({message.channel.id}): {message.content}"
+    user_messages = flagged_messages.setdefault(user_id, [])
+    user_messages.append(entry)
+    if len(user_messages) > 5:
+        flagged_messages[user_id] = user_messages[-5:]
     if log_channel:
         embed = discord.Embed(
             title="🛑 Message Deleted by AI Mod",
@@ -236,20 +262,104 @@ async def warn_user(member, guild):
     await set_warnings(user_id, warnings)
 
     try:
-        await member.send(f"⚠️ You have been warned for violating server rules. Warning {warnings}/3.")
+        await member.send(f"⚠️ You have been warned for violating server rules. Warning {warnings}/5.")
     except:
         pass
 
-    if warnings >= 3:
+    if warnings >= 5:
         try:
             jail_role = guild.get_role(JAIL_ROLE_ID)
             if jail_role:
                 await member.add_roles(jail_role)
-                await member.send("🚨 You have been jailed for repeated rule violations.")
+                await member.send(
+                    "🚨 You have been jailed for repeated rule violations. "
+                    "Your case is pending our moderation team's review. "
+                    "Expect a response soon, and if you have any further questions, "
+                    "please open a ticket."
+                )
                 await set_warnings(user_id, 0)
                 await add_to_jailed(user_id)
+                await request_jail_review(member, guild)
         except discord.Forbidden:
             print("⚠️ Missing permission to modify roles.")
+
+async def request_jail_review(member, guild):
+    review_channel = bot.get_channel(REVIEW_CHANNEL_ID)
+    if not review_channel:
+        return
+
+    user_id = str(member.id)
+    messages = flagged_messages.get(user_id, [])
+    if messages:
+        formatted_messages = "\n".join(f"- {entry}" for entry in messages)
+    else:
+        formatted_messages = "- No cached flagged messages found."
+
+    embed = discord.Embed(
+        title="🚨 Jail Review Required",
+        description=(
+            f"**User:** {member.mention} ({member.id})\n"
+            "React with ✅ to unjail + exempt, or :x_Disagree: to keep jailed."
+        ),
+        color=discord.Color.orange()
+    )
+    embed.add_field(name="Flagged Messages", value=formatted_messages, inline=False)
+    review_message = await review_channel.send(embed=embed)
+    pending_jail_reviews[review_message.id] = user_id
+    await review_message.add_reaction("✅")
+    disagree_emoji = discord.utils.get(guild.emojis, name="x_Disagree")
+    if disagree_emoji:
+        await review_message.add_reaction(disagree_emoji)
+    else:
+        await review_message.add_reaction("❌")
+
+@bot.event
+async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
+    if payload.user_id == bot.user.id:
+        return
+
+    if payload.message_id not in pending_jail_reviews:
+        return
+
+    guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
+    if not guild:
+        return
+
+    member = guild.get_member(payload.user_id)
+    if not member or not is_staff(member):
+        return
+
+    target_user_id = pending_jail_reviews[payload.message_id]
+    target_member = guild.get_member(int(target_user_id))
+    if not target_member:
+        pending_jail_reviews.pop(payload.message_id, None)
+        return
+
+    emoji_name = payload.emoji.name
+    if emoji_name == "✅":
+        jail_role = guild.get_role(JAIL_ROLE_ID)
+        if jail_role:
+            await target_member.remove_roles(jail_role)
+        await remove_from_jailed(target_user_id)
+        await add_exempt_user(target_user_id)
+        try:
+            await target_member.send(
+                "✅ After review, you have been unjailed and added to our exempt list. "
+                "We apologize for the inconvenience. If you have any other concerns or another issue arises, "
+                "please create a ticket."
+            )
+        except:
+            pass
+        pending_jail_reviews.pop(payload.message_id, None)
+    elif emoji_name in {"x_Disagree", "❌"}:
+        try:
+            await target_member.send(
+                "⚠️ After review by our moderation team, your jail has been deemed correct. "
+                "You will not be unjailed unless you create a ticket and request further review."
+            )
+        except:
+            pass
+        pending_jail_reviews.pop(payload.message_id, None)
 
 from discord import app_commands
 
