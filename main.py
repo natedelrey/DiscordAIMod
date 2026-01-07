@@ -52,6 +52,10 @@ STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
     1269504508912992328, 1279604226799964231, 1315356574356734064, 1269517409526616196
 }
+JAIL_REVIEW_AGREE_EMOJI_ID = 1344672083036082258
+JAIL_REVIEW_DISAGREE_EMOJI_ID = 1412540238987006103
+JAIL_REVIEW_AGREE_EMOJI_NAME = "x_agree"
+JAIL_REVIEW_DISAGREE_EMOJI_NAME = "x_Disagree"
 
 Base = declarative_base()
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -299,19 +303,18 @@ async def request_jail_review(member, guild):
         title="🚨 Jail Review Required",
         description=(
             f"**User:** {member.mention} ({member.id})\n"
-            "React with ✅ to unjail + exempt, or :x_Disagree: to keep jailed."
+            f"React with <:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}> to unjail + exempt, "
+            f"or <:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}> to keep jailed."
         ),
         color=discord.Color.orange()
     )
     embed.add_field(name="Flagged Messages", value=formatted_messages, inline=False)
     review_message = await review_channel.send(embed=embed)
     pending_jail_reviews[review_message.id] = user_id
-    await review_message.add_reaction("✅")
-    disagree_emoji = discord.utils.get(guild.emojis, name="x_Disagree")
-    if disagree_emoji:
-        await review_message.add_reaction(disagree_emoji)
-    else:
-        await review_message.add_reaction("❌")
+    agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID)
+    disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID)
+    await review_message.add_reaction(agree_emoji or f"<:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}>")
+    await review_message.add_reaction(disagree_emoji or f"<:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}>")
 
 async def close_jail_review_message(channel, message_id, moderator, decision):
     try:
@@ -339,12 +342,10 @@ async def bump_pending_jail_reviews(channel, guild):
         content = message.content if message.content else None
         new_message = await channel.send(content=content, embed=embed)
         pending_jail_reviews[new_message.id] = user_id
-        await new_message.add_reaction("✅")
-        disagree_emoji = discord.utils.get(guild.emojis, name="x_Disagree")
-        if disagree_emoji:
-            await new_message.add_reaction(disagree_emoji)
-        else:
-            await new_message.add_reaction("❌")
+        agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID)
+        disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID)
+        await new_message.add_reaction(agree_emoji or f"<:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}>")
+        await new_message.add_reaction(disagree_emoji or f"<:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}>")
         try:
             await message.delete()
         except discord.Forbidden:
@@ -373,7 +374,8 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         return
 
     emoji_name = payload.emoji.name
-    if emoji_name == "✅":
+    emoji_id = payload.emoji.id
+    if emoji_id == JAIL_REVIEW_AGREE_EMOJI_ID or emoji_name == JAIL_REVIEW_AGREE_EMOJI_NAME:
         jail_role = guild.get_role(JAIL_ROLE_ID)
         if jail_role:
             await target_member.remove_roles(jail_role)
@@ -392,7 +394,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         if channel:
             await close_jail_review_message(channel, payload.message_id, member, "not warranted")
             await bump_pending_jail_reviews(channel, guild)
-    elif emoji_name in {"x_Disagree", "❌"}:
+    elif emoji_id == JAIL_REVIEW_DISAGREE_EMOJI_ID or emoji_name == JAIL_REVIEW_DISAGREE_EMOJI_NAME:
         try:
             await target_member.send(
                 "⚠️ After review by our moderation team, your jail has been deemed correct. "
