@@ -63,6 +63,7 @@ AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSes
 
 flagged_messages = {}
 pending_jail_reviews = {}
+pending_jail_reviews_by_user = {}
 
 class JailedUser(Base):
     __tablename__ = 'jailed_users'
@@ -293,6 +294,22 @@ async def request_jail_review(member, guild):
         return
 
     user_id = str(member.id)
+    existing_message_id = pending_jail_reviews_by_user.get(user_id)
+    if existing_message_id:
+        try:
+            existing_message = await review_channel.fetch_message(existing_message_id)
+        except discord.NotFound:
+            pending_jail_reviews.pop(existing_message_id, None)
+            pending_jail_reviews_by_user.pop(user_id, None)
+        else:
+            try:
+                await existing_message.reply(
+                    "⚠️ Additional jail trigger detected while review is pending.",
+                    mention_author=False,
+                )
+            except discord.Forbidden:
+                pass
+            return
     messages = flagged_messages.get(user_id, [])
     if messages:
         formatted_messages = "\n".join(f"- {entry}" for entry in messages)
@@ -311,6 +328,7 @@ async def request_jail_review(member, guild):
     embed.add_field(name="Flagged Messages", value=formatted_messages, inline=False)
     review_message = await review_channel.send(embed=embed)
     pending_jail_reviews[review_message.id] = user_id
+    pending_jail_reviews_by_user[user_id] = review_message.id
     agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID)
     disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID)
     await review_message.add_reaction(agree_emoji or f"<:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}>")
@@ -327,29 +345,6 @@ async def close_jail_review_message(channel, message_id, moderator, decision):
         await message.clear_reactions()
     except discord.Forbidden:
         pass
-
-async def bump_pending_jail_reviews(channel, guild):
-    if not pending_jail_reviews:
-        return
-    pending_items = list(pending_jail_reviews.items())
-    pending_jail_reviews.clear()
-    for message_id, user_id in pending_items:
-        try:
-            message = await channel.fetch_message(message_id)
-        except discord.NotFound:
-            continue
-        embed = message.embeds[0] if message.embeds else None
-        content = message.content if message.content else None
-        new_message = await channel.send(content=content, embed=embed)
-        pending_jail_reviews[new_message.id] = user_id
-        agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID)
-        disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID)
-        await new_message.add_reaction(agree_emoji or f"<:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}>")
-        await new_message.add_reaction(disagree_emoji or f"<:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}>")
-        try:
-            await message.delete()
-        except discord.Forbidden:
-            pass
 
 @bot.event
 async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
@@ -371,6 +366,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
     target_member = guild.get_member(int(target_user_id))
     if not target_member:
         pending_jail_reviews.pop(payload.message_id, None)
+        pending_jail_reviews_by_user.pop(target_user_id, None)
         return
 
     emoji_name = payload.emoji.name
@@ -390,10 +386,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         except:
             pass
         pending_jail_reviews.pop(payload.message_id, None)
+        pending_jail_reviews_by_user.pop(target_user_id, None)
         channel = bot.get_channel(payload.channel_id)
         if channel:
             await close_jail_review_message(channel, payload.message_id, member, "not warranted")
-            await bump_pending_jail_reviews(channel, guild)
     elif emoji_id == JAIL_REVIEW_DISAGREE_EMOJI_ID or emoji_name == JAIL_REVIEW_DISAGREE_EMOJI_NAME:
         try:
             await target_member.send(
@@ -403,10 +399,10 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
         except:
             pass
         pending_jail_reviews.pop(payload.message_id, None)
+        pending_jail_reviews_by_user.pop(target_user_id, None)
         channel = bot.get_channel(payload.channel_id)
         if channel:
             await close_jail_review_message(channel, payload.message_id, member, "correct")
-            await bump_pending_jail_reviews(channel, guild)
 
 from discord import app_commands
 
