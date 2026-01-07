@@ -266,11 +266,11 @@ async def warn_user(member, guild):
     await set_warnings(user_id, warnings)
 
     try:
-        await member.send(f"⚠️ You have been warned for violating server rules. Warning {warnings}/5.")
+        await member.send(f"⚠️ You have been warned for violating server rules. Warning {warnings}/3.")
     except:
         pass
 
-    if warnings >= 5:
+    if warnings >= 3:
         try:
             jail_role = guild.get_role(JAIL_ROLE_ID)
             if jail_role:
