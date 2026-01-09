@@ -289,9 +289,13 @@ async def warn_user(member, guild):
             print("⚠️ Missing permission to modify roles.")
 
 async def request_jail_review(member, guild):
-    review_channel = bot.get_channel(REVIEW_CHANNEL_ID)
+    review_channel = bot.get_channel(REVIEW_CHANNEL_ID) or guild.get_channel(REVIEW_CHANNEL_ID)
     if not review_channel:
-        return
+        try:
+            review_channel = await guild.fetch_channel(REVIEW_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden) as e:
+            print(f"⚠️ Unable to access jail review channel {REVIEW_CHANNEL_ID}: {e}")
+            return
 
     user_id = str(member.id)
     existing_message_id = pending_jail_reviews_by_user.get(user_id)
@@ -326,13 +330,23 @@ async def request_jail_review(member, guild):
         color=discord.Color.orange()
     )
     embed.add_field(name="Flagged Messages", value=formatted_messages, inline=False)
-    review_message = await review_channel.send(embed=embed)
+    try:
+        review_message = await review_channel.send(embed=embed)
+    except discord.Forbidden as e:
+        print(f"⚠️ Missing permission to send jail review message: {e}")
+        return
     pending_jail_reviews[review_message.id] = user_id
     pending_jail_reviews_by_user[user_id] = review_message.id
-    agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID)
-    disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID)
-    await review_message.add_reaction(agree_emoji or f"<:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}>")
-    await review_message.add_reaction(disagree_emoji or f"<:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}>")
+    agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID) or discord.PartialEmoji(
+        name=JAIL_REVIEW_AGREE_EMOJI_NAME,
+        id=JAIL_REVIEW_AGREE_EMOJI_ID,
+    )
+    disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID) or discord.PartialEmoji(
+        name=JAIL_REVIEW_DISAGREE_EMOJI_NAME,
+        id=JAIL_REVIEW_DISAGREE_EMOJI_ID,
+    )
+    await review_message.add_reaction(agree_emoji)
+    await review_message.add_reaction(disagree_emoji)
 
 async def close_jail_review_message(channel, message_id, moderator, decision):
     try:
