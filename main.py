@@ -52,10 +52,6 @@ STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
     1269504508912992328, 1279604226799964231, 1315356574356734064, 1269517409526616196
 }
-JAIL_REVIEW_AGREE_EMOJI_ID = 1344672083036082258
-JAIL_REVIEW_DISAGREE_EMOJI_ID = 1412540238987006103
-JAIL_REVIEW_AGREE_EMOJI_NAME = "x_agree"
-JAIL_REVIEW_DISAGREE_EMOJI_NAME = "x_Disagree"
 
 Base = declarative_base()
 engine = create_async_engine(DATABASE_URL, echo=False)
@@ -324,29 +320,18 @@ async def request_jail_review(member, guild):
         title="🚨 Jail Review Required",
         description=(
             f"**User:** {member.mention} ({member.id})\n"
-            f"React with <:x_agree:{JAIL_REVIEW_AGREE_EMOJI_ID}> to unjail + exempt, "
-            f"or <:x_Disagree:{JAIL_REVIEW_DISAGREE_EMOJI_ID}> to keep jailed."
+            "Use the buttons below to unjail + exempt, or keep jailed."
         ),
         color=discord.Color.orange()
     )
     embed.add_field(name="Flagged Messages", value=formatted_messages, inline=False)
     try:
-        review_message = await review_channel.send(embed=embed)
+        review_message = await review_channel.send(embed=embed, view=JailReviewView())
     except discord.Forbidden as e:
         print(f"⚠️ Missing permission to send jail review message: {e}")
         return
     pending_jail_reviews[review_message.id] = user_id
     pending_jail_reviews_by_user[user_id] = review_message.id
-    agree_emoji = guild.get_emoji(JAIL_REVIEW_AGREE_EMOJI_ID) or discord.PartialEmoji(
-        name=JAIL_REVIEW_AGREE_EMOJI_NAME,
-        id=JAIL_REVIEW_AGREE_EMOJI_ID,
-    )
-    disagree_emoji = guild.get_emoji(JAIL_REVIEW_DISAGREE_EMOJI_ID) or discord.PartialEmoji(
-        name=JAIL_REVIEW_DISAGREE_EMOJI_NAME,
-        id=JAIL_REVIEW_DISAGREE_EMOJI_ID,
-    )
-    await review_message.add_reaction(agree_emoji)
-    await review_message.add_reaction(disagree_emoji)
 
 async def close_jail_review_message(channel, message_id, moderator, decision):
     try:
@@ -354,39 +339,40 @@ async def close_jail_review_message(channel, message_id, moderator, decision):
     except discord.NotFound:
         return
     close_text = f"Closed by {moderator.mention}, jailed deemed {decision}."
-    await message.edit(content=close_text, embed=None)
+    await message.edit(content=close_text, embed=None, view=None)
     try:
         await message.clear_reactions()
     except discord.Forbidden:
         pass
 
-@bot.event
-async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
-    if payload.user_id == bot.user.id:
+async def handle_jail_review_decision(interaction: discord.Interaction, decision: str):
+    message = interaction.message
+    if not message or message.id not in pending_jail_reviews:
+        await interaction.response.send_message("⚠️ This jail review is already closed.", ephemeral=True)
         return
 
-    if payload.message_id not in pending_jail_reviews:
+    if not interaction.guild:
+        await interaction.response.send_message("⚠️ This action must be used in a server.", ephemeral=True)
         return
 
-    guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
-    if not guild:
+    moderator = interaction.user
+    if not isinstance(moderator, discord.Member) or not is_staff(moderator):
+        await interaction.response.send_message("⚠️ You don't have permission to review this.", ephemeral=True)
         return
 
-    member = guild.get_member(payload.user_id)
-    if not member or not is_staff(member):
-        return
-
-    target_user_id = pending_jail_reviews[payload.message_id]
-    target_member = guild.get_member(int(target_user_id))
+    target_user_id = pending_jail_reviews[message.id]
+    target_member = interaction.guild.get_member(int(target_user_id))
     if not target_member:
-        pending_jail_reviews.pop(payload.message_id, None)
+        pending_jail_reviews.pop(message.id, None)
         pending_jail_reviews_by_user.pop(target_user_id, None)
+        await interaction.response.send_message("⚠️ User no longer in server; review cleared.", ephemeral=True)
+        await close_jail_review_message(interaction.channel, message.id, moderator, "closed (user left)")
         return
 
-    emoji_name = payload.emoji.name
-    emoji_id = payload.emoji.id
-    if emoji_id == JAIL_REVIEW_AGREE_EMOJI_ID or emoji_name == JAIL_REVIEW_AGREE_EMOJI_NAME:
-        jail_role = guild.get_role(JAIL_ROLE_ID)
+    await interaction.response.defer(ephemeral=True)
+
+    if decision == "not warranted":
+        jail_role = interaction.guild.get_role(JAIL_ROLE_ID)
         if jail_role:
             await target_member.remove_roles(jail_role)
         await remove_from_jailed(target_user_id)
@@ -399,12 +385,7 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             )
         except:
             pass
-        pending_jail_reviews.pop(payload.message_id, None)
-        pending_jail_reviews_by_user.pop(target_user_id, None)
-        channel = bot.get_channel(payload.channel_id)
-        if channel:
-            await close_jail_review_message(channel, payload.message_id, member, "not warranted")
-    elif emoji_id == JAIL_REVIEW_DISAGREE_EMOJI_ID or emoji_name == JAIL_REVIEW_DISAGREE_EMOJI_NAME:
+    else:
         try:
             await target_member.send(
                 "⚠️ After review by our moderation team, your jail has been deemed correct. "
@@ -412,11 +393,24 @@ async def on_raw_reaction_add(payload: discord.RawReactionActionEvent):
             )
         except:
             pass
-        pending_jail_reviews.pop(payload.message_id, None)
-        pending_jail_reviews_by_user.pop(target_user_id, None)
-        channel = bot.get_channel(payload.channel_id)
-        if channel:
-            await close_jail_review_message(channel, payload.message_id, member, "correct")
+
+    pending_jail_reviews.pop(message.id, None)
+    pending_jail_reviews_by_user.pop(target_user_id, None)
+    await close_jail_review_message(interaction.channel, message.id, moderator, decision)
+    await interaction.followup.send("✅ Jail review updated.", ephemeral=True)
+
+
+class JailReviewView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Unjail + Exempt", style=discord.ButtonStyle.success, emoji="✅")
+    async def unjail_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_jail_review_decision(interaction, "not warranted")
+
+    @discord.ui.button(label="Keep Jailed", style=discord.ButtonStyle.danger, emoji="⛔")
+    async def keep_jailed_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_jail_review_decision(interaction, "correct")
 
 from discord import app_commands
 
