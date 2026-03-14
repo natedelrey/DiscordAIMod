@@ -45,6 +45,11 @@ class MyBot(commands.Bot):
         ]:
             self.tree.add_command(command)
 
+    async def close(self):
+        await super().close()
+        await engine.dispose()
+        await openai_client.close()
+
 bot = MyBot(command_prefix="!", intents=intents)
 
 debug_guilds = []  # optionally add your guild ID(s) here for faster dev
