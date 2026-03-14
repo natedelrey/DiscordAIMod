@@ -6,6 +6,7 @@ import traceback
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import asyncio
+import io
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import Column, String, Integer, select
@@ -253,35 +254,53 @@ def has_image_attachments(message: discord.Message):
     return False
 
 
-def build_pending_media_message(author: discord.abc.User, text: str):
-    parts = [PENDING_MEDIA_HEADER, PENDING_MEDIA_SUBTEXT]
-    if text.strip():
-        parts.append(f"\n{author.mention}: {text}")
-    return "\n".join(parts)
+def sanitize_message_content(content: str):
+    # Prevent @everyone/@here mentions from triggering notifications.
+    return content.replace("@everyone", "@\u200beveryone").replace("@here", "@\u200bhere")
+
+
+def build_pending_media_message():
+    return "\n".join([PENDING_MEDIA_HEADER, PENDING_MEDIA_SUBTEXT])
 
 
 def build_approved_media_message(author_mention: str, text: str):
-    if text.strip():
-        return f"{author_mention}: {text}"
+    safe_text = sanitize_message_content(text)
+    if safe_text.strip():
+        return f"{author_mention}: {safe_text}"
     return author_mention
 
 
 async def handle_media_message(message: discord.Message):
-    image_urls = []
+    media_attachments = []
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
-            image_urls.append(attachment.url)
+            media_attachments.append(attachment)
             continue
 
         if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
-            image_urls.append(attachment.url)
+            media_attachments.append(attachment)
 
-    if not image_urls:
+    if not media_attachments:
         await bot.process_commands(message)
         return
 
     text = message.content or ""
-    pending_content = build_pending_media_message(message.author, text)
+    pending_content = build_pending_media_message()
+
+    stored_media = []
+    for attachment in media_attachments:
+        try:
+            stored_media.append({
+                "filename": attachment.filename,
+                "bytes": await attachment.read(),
+            })
+        except Exception as e:
+            print(f"⚠️ Failed to cache media attachment {attachment.filename}: {e}")
+
+    if not stored_media:
+        print("⚠️ No image attachments could be cached for media review.")
+        await bot.process_commands(message)
+        return
 
     try:
         await message.delete()
@@ -290,7 +309,10 @@ async def handle_media_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    placeholder = await message.channel.send(pending_content)
+    placeholder = await message.channel.send(
+        pending_content,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
 
     review_channel = bot.get_channel(MEDIA_REVIEW_CHANNEL_ID)
     if not review_channel and message.guild:
@@ -317,10 +339,10 @@ async def handle_media_message(message: discord.Message):
         color=discord.Color.orange(),
     )
     if text.strip():
-        embed.add_field(name="Message Text", value=text, inline=False)
+        embed.add_field(name="Message Text", value=sanitize_message_content(text), inline=False)
     embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
     embed.add_field(name="Jump Link", value=f"[Open message location]({placeholder.jump_url})", inline=False)
-    embed.set_image(url=image_urls[0])
+    embed.set_image(url=media_attachments[0].url)
 
     review_message = await review_channel.send(embed=embed, view=MediaReviewView())
     pending_media_reviews[review_message.id] = {
@@ -329,7 +351,7 @@ async def handle_media_message(message: discord.Message):
         "author_id": message.author.id,
         "author_mention": message.author.mention,
         "text": text,
-        "image_urls": image_urls,
+        "images": stored_media,
     }
 
 
@@ -360,20 +382,20 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
 
     if placeholder:
         if decision == "approved":
-            embeds = []
-            for image_url in payload["image_urls"]:
-                media_embed = discord.Embed(color=discord.Color.green())
-                media_embed.set_image(url=image_url)
-                embeds.append(media_embed)
+            files = []
+            for image in payload["images"]:
+                files.append(discord.File(io.BytesIO(image["bytes"]), filename=image["filename"]))
 
             await placeholder.edit(
                 content=build_approved_media_message(payload["author_mention"], payload["text"]),
-                embeds=embeds,
+                attachments=files,
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
             )
         else:
             await placeholder.edit(
                 content=f"{payload['author_mention']}: Media was not approved by moderators.",
-                embeds=[],
+                attachments=[],
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
             )
 
     status = "Approved ✅" if decision == "approved" else "Disapproved ❌"
