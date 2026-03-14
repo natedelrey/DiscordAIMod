@@ -383,11 +383,21 @@ class MediaReviewView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅")
+    @discord.ui.button(
+        label="Approve",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="media_review:approve",
+    )
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_media_review_decision(interaction, "approved")
 
-    @discord.ui.button(label="Disapprove", style=discord.ButtonStyle.danger, emoji="⛔")
+    @discord.ui.button(
+        label="Disapprove",
+        style=discord.ButtonStyle.danger,
+        emoji="⛔",
+        custom_id="media_review:disapprove",
+    )
     async def disapprove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_media_review_decision(interaction, "disapproved")
 
@@ -566,11 +576,21 @@ class JailReviewView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Unjail + Exempt", style=discord.ButtonStyle.success, emoji="✅")
+    @discord.ui.button(
+        label="Unjail + Exempt",
+        style=discord.ButtonStyle.success,
+        emoji="✅",
+        custom_id="jail_review:unjail_exempt",
+    )
     async def unjail_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_jail_review_decision(interaction, "not warranted")
 
-    @discord.ui.button(label="Keep Jailed", style=discord.ButtonStyle.danger, emoji="⛔")
+    @discord.ui.button(
+        label="Keep Jailed",
+        style=discord.ButtonStyle.danger,
+        emoji="⛔",
+        custom_id="jail_review:keep_jailed",
+    )
     async def keep_jailed_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_jail_review_decision(interaction, "correct")
 
