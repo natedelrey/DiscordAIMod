@@ -251,10 +251,10 @@ def has_image_attachments(message: discord.Message):
     return False
 
 
-def build_pending_media_message(author_mention: str, text: str):
+def build_pending_media_message(author: discord.abc.User, text: str):
     parts = [PENDING_MEDIA_HEADER, PENDING_MEDIA_SUBTEXT]
     if text.strip():
-        parts.append(f"\n{author_mention}: {text}")
+        parts.append(f"\n{author.mention}: {text}")
     return "\n".join(parts)
 
 
@@ -264,31 +264,22 @@ def build_approved_media_message(author_mention: str, text: str):
     return author_mention
 
 
-def build_author_embed(author: discord.abc.User, title=None, description=None, *, color=discord.Color.blurple()):
-    embed = discord.Embed(title=title, description=description, color=color)
-    embed.set_author(name=str(author), icon_url=author.display_avatar.url)
-    return embed
-
-
-def get_image_urls(message: discord.Message):
+async def handle_media_message(message: discord.Message):
     image_urls = []
     for attachment in message.attachments:
         if attachment.content_type and attachment.content_type.startswith("image/"):
             image_urls.append(attachment.url)
             continue
+
         if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
             image_urls.append(attachment.url)
-    return image_urls
 
-
-async def handle_media_message(message: discord.Message):
-    image_urls = get_image_urls(message)
     if not image_urls:
         await bot.process_commands(message)
         return
 
     text = message.content or ""
-    pending_content = build_pending_media_message(message.author.mention, text)
+    pending_content = build_pending_media_message(message.author, text)
 
     try:
         await message.delete()
@@ -297,14 +288,7 @@ async def handle_media_message(message: discord.Message):
         await bot.process_commands(message)
         return
 
-    pending_embed = build_author_embed(message.author, color=discord.Color.blurple())
-    pending_embed.set_footer(text="Pending moderator review")
-
-    try:
-        placeholder = await message.channel.send(content=pending_content, embed=pending_embed)
-    except discord.Forbidden:
-        print("⚠️ Missing permission to send media placeholder message.")
-        return
+    placeholder = await message.channel.send(pending_content)
 
     review_channel = bot.get_channel(MEDIA_REVIEW_CHANNEL_ID)
     if not review_channel and message.guild:
@@ -336,23 +320,12 @@ async def handle_media_message(message: discord.Message):
     embed.add_field(name="Jump Link", value=f"[Open message location]({placeholder.jump_url})", inline=False)
     embed.set_image(url=image_urls[0])
 
-    try:
-        review_message = await review_channel.send(embed=embed, view=MediaReviewView())
-    except discord.Forbidden:
-        print("⚠️ Missing permission to send media review message.")
-        try:
-            await placeholder.edit(content=f"{message.author.mention}: Media could not be queued for moderator review.", embed=None)
-        except discord.Forbidden:
-            pass
-        return
-
+    review_message = await review_channel.send(embed=embed, view=MediaReviewView())
     pending_media_reviews[review_message.id] = {
         "channel_id": message.channel.id,
         "placeholder_id": placeholder.id,
         "author_id": message.author.id,
         "author_mention": message.author.mention,
-        "author_name": str(message.author),
-        "author_avatar_url": message.author.display_avatar.url,
         "text": text,
         "image_urls": image_urls,
     }
@@ -391,29 +364,14 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
                 media_embed.set_image(url=image_url)
                 embeds.append(media_embed)
 
-            approved_embed = discord.Embed(color=discord.Color.green())
-            approved_embed.set_author(name=payload["author_name"], icon_url=payload["author_avatar_url"])
-            if embeds:
-                approved_embed.set_image(url=payload["image_urls"][0])
-
             await placeholder.edit(
                 content=build_approved_media_message(payload["author_mention"], payload["text"]),
-                embed=approved_embed,
-                attachments=[],
+                embeds=embeds,
             )
-
-            for image_url in payload["image_urls"][1:]:
-                extra_embed = discord.Embed(color=discord.Color.green())
-                extra_embed.set_image(url=image_url)
-                await placeholder.channel.send(embed=extra_embed)
         else:
-            rejected_embed = discord.Embed(color=discord.Color.red())
-            rejected_embed.set_author(name=payload["author_name"], icon_url=payload["author_avatar_url"])
-            rejected_embed.description = "Media was not approved by moderators."
             await placeholder.edit(
                 content=f"{payload['author_mention']}: Media was not approved by moderators.",
-                embed=rejected_embed,
-                attachments=[],
+                embeds=[],
             )
 
     status = "Approved ✅" if decision == "approved" else "Disapproved ❌"
