@@ -47,6 +47,7 @@ debug_guilds = []  # optionally add your guild ID(s) here for faster dev
 LOG_CHANNEL_ID = 1384748303845167185
 JAIL_ROLE_ID = 1292210864128004147
 REVIEW_CHANNEL_ID = 1457762507484565687
+MEDIA_REVIEW_CHANNEL_ID = 1482489293342769244
 TICKET_CATEGORY_ID = 1364267276169121872
 STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
@@ -60,6 +61,10 @@ AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSes
 flagged_messages = {}
 pending_jail_reviews = {}
 pending_jail_reviews_by_user = {}
+pending_media_reviews = {}
+
+PENDING_MEDIA_HEADER = "Media was attached to a message, pending moderator review."
+PENDING_MEDIA_SUBTEXT = "*If approved, this message will display the media.*"
 
 class JailedUser(Base):
     __tablename__ = 'jailed_users'
@@ -210,6 +215,10 @@ async def on_message(message):
             await bot.process_commands(message)
             return
 
+    if has_image_attachments(message):
+        await handle_media_message(message)
+        return
+
     if is_staff(message.author):
         await bot.process_commands(message)
         return
@@ -228,6 +237,157 @@ async def on_message(message):
             print("⚠️ Missing permissions to delete message or manage roles.")
 
     await bot.process_commands(message)
+
+
+def has_image_attachments(message: discord.Message):
+    image_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+    for attachment in message.attachments:
+        if attachment.content_type and attachment.content_type.startswith("image/"):
+            return True
+        if attachment.filename.lower().endswith(image_exts):
+            return True
+    return False
+
+
+def build_pending_media_message(author: discord.abc.User, text: str):
+    parts = [PENDING_MEDIA_HEADER, PENDING_MEDIA_SUBTEXT]
+    if text.strip():
+        parts.append(f"\n{author.mention}: {text}")
+    return "\n".join(parts)
+
+
+def build_approved_media_message(author_mention: str, text: str):
+    if text.strip():
+        return f"{author_mention}: {text}"
+    return author_mention
+
+
+async def handle_media_message(message: discord.Message):
+    image_urls = []
+    for attachment in message.attachments:
+        if attachment.content_type and attachment.content_type.startswith("image/"):
+            image_urls.append(attachment.url)
+            continue
+
+        if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+            image_urls.append(attachment.url)
+
+    if not image_urls:
+        await bot.process_commands(message)
+        return
+
+    text = message.content or ""
+    pending_content = build_pending_media_message(message.author, text)
+
+    try:
+        await message.delete()
+    except discord.Forbidden:
+        print("⚠️ Missing permissions to delete image message.")
+        await bot.process_commands(message)
+        return
+
+    placeholder = await message.channel.send(pending_content)
+
+    review_channel = bot.get_channel(MEDIA_REVIEW_CHANNEL_ID)
+    if not review_channel and message.guild:
+        review_channel = message.guild.get_channel(MEDIA_REVIEW_CHANNEL_ID)
+
+    if not review_channel and message.guild:
+        try:
+            review_channel = await message.guild.fetch_channel(MEDIA_REVIEW_CHANNEL_ID)
+        except (discord.NotFound, discord.Forbidden) as e:
+            print(f"⚠️ Unable to access media review channel {MEDIA_REVIEW_CHANNEL_ID}: {e}")
+            return
+
+    if not review_channel:
+        print(f"⚠️ Media review channel {MEDIA_REVIEW_CHANNEL_ID} not found.")
+        return
+
+    embed = discord.Embed(
+        title="🖼️ Media Review Required",
+        description=(
+            f"**User:** {message.author.mention} ({message.author.id})\n"
+            f"**Channel:** {message.channel.mention}\n"
+            "Use the buttons below to approve or disapprove this media."
+        ),
+        color=discord.Color.orange(),
+    )
+    if text.strip():
+        embed.add_field(name="Message Text", value=text, inline=False)
+    embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
+    embed.add_field(name="Jump Link", value=f"[Open message location]({placeholder.jump_url})", inline=False)
+    embed.set_image(url=image_urls[0])
+
+    review_message = await review_channel.send(embed=embed, view=MediaReviewView())
+    pending_media_reviews[review_message.id] = {
+        "channel_id": message.channel.id,
+        "placeholder_id": placeholder.id,
+        "author_id": message.author.id,
+        "author_mention": message.author.mention,
+        "text": text,
+        "image_urls": image_urls,
+    }
+
+
+async def handle_media_review_decision(interaction: discord.Interaction, decision: str):
+    message = interaction.message
+    if not message or message.id not in pending_media_reviews:
+        await interaction.response.send_message("⚠️ This media review is already closed.", ephemeral=True)
+        return
+
+    moderator = interaction.user
+    if not isinstance(moderator, discord.Member) or not is_staff(moderator):
+        await interaction.response.send_message("⚠️ You don't have permission to review media.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    payload = pending_media_reviews.pop(message.id)
+    channel = bot.get_channel(payload["channel_id"])
+    if channel is None and interaction.guild:
+        channel = interaction.guild.get_channel(payload["channel_id"])
+
+    placeholder = None
+    if channel:
+        try:
+            placeholder = await channel.fetch_message(payload["placeholder_id"])
+        except (discord.NotFound, discord.Forbidden):
+            placeholder = None
+
+    if placeholder:
+        if decision == "approved":
+            embeds = []
+            for image_url in payload["image_urls"]:
+                media_embed = discord.Embed(color=discord.Color.green())
+                media_embed.set_image(url=image_url)
+                embeds.append(media_embed)
+
+            await placeholder.edit(
+                content=build_approved_media_message(payload["author_mention"], payload["text"]),
+                embeds=embeds,
+            )
+        else:
+            await placeholder.edit(
+                content=f"{payload['author_mention']}: Media was not approved by moderators.",
+                embeds=[],
+            )
+
+    status = "Approved ✅" if decision == "approved" else "Disapproved ❌"
+    await message.edit(content=f"{status} by {moderator.mention}", embed=message.embeds[0] if message.embeds else None, view=None)
+    await interaction.followup.send("✅ Media review updated.", ephemeral=True)
+
+
+class MediaReviewView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, emoji="✅")
+    async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_media_review_decision(interaction, "approved")
+
+    @discord.ui.button(label="Disapprove", style=discord.ButtonStyle.danger, emoji="⛔")
+    async def disapprove_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_media_review_decision(interaction, "disapproved")
 
 @bot.event
 async def on_member_join(member):
