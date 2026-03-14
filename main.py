@@ -28,7 +28,7 @@ intents.message_content = True
 
 class MyBot(commands.Bot):
     async def setup_hook(self):
-        await init_db()
+        await init_db_with_retries()
         self.add_view(JailReviewView())
         self.add_view(MediaReviewView())
         for command in [
@@ -60,7 +60,12 @@ STAFF_ROLE_IDS = {
 }
 
 Base = declarative_base()
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=1800,
+)
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 flagged_messages = {}
@@ -91,6 +96,22 @@ class ExemptUser(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+async def init_db_with_retries(retry_delay_seconds: int = 5):
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await init_db()
+            if attempt > 1:
+                print(f"✅ Database initialized on attempt {attempt}.")
+            return
+        except Exception as e:
+            print(f"❌ Database initialization failed (attempt {attempt}): {e}")
+            traceback.print_exc()
+            print(f"🔁 Retrying database initialization in {retry_delay_seconds}s...")
+            await asyncio.sleep(retry_delay_seconds)
 
 def is_staff(member):
     return any(role.id in STAFF_ROLE_IDS for role in member.roles)
