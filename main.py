@@ -26,6 +26,8 @@ intents.message_content = True
 class MyBot(commands.Bot):
     async def setup_hook(self):
         await init_db()
+        self.add_view(JailReviewView())
+        self.add_view(MediaReviewView())
         for command in [
             removewarnings,
             whitelist_add,
