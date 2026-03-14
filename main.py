@@ -824,3 +824,12 @@ try:
     start_bot_with_retries()
 except Exception as e:
     print(f"❌ Bot failed to run after retries: {e}")
+finally:
+    try:
+        asyncio.run(engine.dispose())
+    except Exception as e:
+        print(f"⚠️ Failed to dispose database engine on shutdown: {e}")
+    try:
+        asyncio.run(openai_client.close())
+    except Exception as e:
+        print(f"⚠️ Failed to close OpenAI client on shutdown: {e}")
