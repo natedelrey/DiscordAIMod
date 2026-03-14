@@ -739,7 +739,26 @@ async def exempts_list(interaction: discord.Interaction):
         ephemeral=True
     )
 
+def start_bot_with_retries(max_attempts: int = 3, retry_delay_seconds: int = 5):
+    if not DISCORD_TOKEN:
+        raise RuntimeError("DISCORD_TOKEN is not configured.")
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            bot.run(DISCORD_TOKEN)
+            return
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            is_last_attempt = attempt == max_attempts
+            print(f"❌ Bot failed to run (attempt {attempt}/{max_attempts}): {e}")
+            if is_last_attempt:
+                raise
+            print(f"🔁 Retrying bot startup in {retry_delay_seconds}s...")
+            asyncio.run(asyncio.sleep(retry_delay_seconds))
+
+
 try:
-    bot.run(DISCORD_TOKEN)
+    start_bot_with_retries()
 except Exception as e:
-    print(f"❌ Bot failed to run: {e}")
+    print(f"❌ Bot failed to run after retries: {e}")
