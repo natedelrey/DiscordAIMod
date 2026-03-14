@@ -58,6 +58,7 @@ STAFF_ROLE_IDS = {
     1279603929356828682, 1161044541466484816, 1139374785592295484,
     1269504508912992328, 1279604226799964231, 1315356574356734064, 1269517409526616196
 }
+MEDIA_REVIEW_EXEMPT_ROLE_ID = 1444732182802464929
 
 Base = declarative_base()
 engine = create_async_engine(
@@ -115,6 +116,12 @@ async def init_db_with_retries(retry_delay_seconds: int = 5):
 
 def is_staff(member):
     return any(role.id in STAFF_ROLE_IDS for role in member.roles)
+
+
+def is_media_review_exempt(member):
+    if is_staff(member):
+        return True
+    return any(role.id == MEDIA_REVIEW_EXEMPT_ROLE_ID for role in member.roles)
 
 async def get_warnings(user_id):
     async with AsyncSessionLocal() as session:
@@ -241,7 +248,7 @@ async def on_message(message):
             await bot.process_commands(message)
             return
 
-    if has_image_attachments(message):
+    if has_image_attachments(message) and not is_media_review_exempt(message.author):
         await handle_media_message(message)
         return
 
@@ -363,9 +370,14 @@ async def handle_media_message(message: discord.Message):
         embed.add_field(name="Message Text", value=sanitize_message_content(text), inline=False)
     embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
     embed.add_field(name="Jump Link", value=f"[Open message location]({placeholder.jump_url})", inline=False)
-    embed.set_image(url=media_attachments[0].url)
+    review_files = [
+        discord.File(io.BytesIO(image["bytes"]), filename=image["filename"])
+        for image in stored_media
+    ]
+    if review_files:
+        embed.set_image(url=f"attachment://{review_files[0].filename}")
 
-    review_message = await review_channel.send(embed=embed, view=MediaReviewView())
+    review_message = await review_channel.send(embed=embed, files=review_files, view=MediaReviewView())
     pending_media_reviews[review_message.id] = {
         "channel_id": message.channel.id,
         "placeholder_id": placeholder.id,
