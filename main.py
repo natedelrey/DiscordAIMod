@@ -1,6 +1,8 @@
 import discord
 from discord.ext import commands
 import os
+import time
+import traceback
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import asyncio
@@ -739,23 +741,23 @@ async def exempts_list(interaction: discord.Interaction):
         ephemeral=True
     )
 
-def start_bot_with_retries(max_attempts: int = 3, retry_delay_seconds: int = 5):
+def start_bot_with_retries(retry_delay_seconds: int = 5):
     if not DISCORD_TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not configured.")
 
-    for attempt in range(1, max_attempts + 1):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             bot.run(DISCORD_TOKEN)
             return
         except KeyboardInterrupt:
             raise
         except Exception as e:
-            is_last_attempt = attempt == max_attempts
-            print(f"❌ Bot failed to run (attempt {attempt}/{max_attempts}): {e}")
-            if is_last_attempt:
-                raise
+            print(f"❌ Bot failed to run (attempt {attempt}): {e}")
+            traceback.print_exc()
             print(f"🔁 Retrying bot startup in {retry_delay_seconds}s...")
-            asyncio.run(asyncio.sleep(retry_delay_seconds))
+            time.sleep(retry_delay_seconds)
 
 
 try:
