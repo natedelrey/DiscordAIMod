@@ -81,6 +81,11 @@ pending_media_reviews = {}
 
 PENDING_MEDIA_HEADER = "Media was attached to a message, pending moderator review."
 PENDING_MEDIA_SUBTEXT = "*If approved, this message will display the media.*"
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+VIDEO_EXTENSIONS = (
+    ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
+    ".wmv", ".flv", ".mpeg", ".mpg", ".3gp",
+)
 
 class JailedUser(Base):
     __tablename__ = 'jailed_users'
@@ -253,7 +258,7 @@ async def on_message(message):
             await bot.process_commands(message)
             return
 
-    if has_image_attachments(message) and not is_media_review_exempt(message.author):
+    if has_media_attachments(message) and not is_media_review_exempt(message.author):
         await handle_media_message(message)
         return
 
@@ -277,13 +282,34 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-def has_image_attachments(message: discord.Message):
-    image_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+def has_media_attachments(message: discord.Message):
     for attachment in message.attachments:
-        if attachment.content_type and attachment.content_type.startswith("image/"):
+        if is_reviewable_media_attachment(attachment):
             return True
-        if attachment.filename.lower().endswith(image_exts):
-            return True
+    return False
+
+
+def is_reviewable_media_attachment(attachment: discord.Attachment):
+    content_type = (attachment.content_type or "").lower()
+    filename = attachment.filename.lower()
+    media_exts = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+    if content_type.startswith("image/") or content_type.startswith("video/"):
+        return True
+
+    # Some uploads arrive as generic MIME types; catch obvious media markers.
+    if "image" in content_type or "video" in content_type:
+        return True
+
+    if filename.endswith(media_exts):
+        return True
+
+    # Fallbacks for attachments that lack content_type/extension metadata.
+    if getattr(attachment, "height", None) is not None:
+        return True
+    if getattr(attachment, "duration", None) is not None:
+        return True
+
     return False
 
 
@@ -306,11 +332,7 @@ def build_approved_media_message(author_mention: str, text: str):
 async def handle_media_message(message: discord.Message):
     media_attachments = []
     for attachment in message.attachments:
-        if attachment.content_type and attachment.content_type.startswith("image/"):
-            media_attachments.append(attachment)
-            continue
-
-        if attachment.filename.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+        if is_reviewable_media_attachment(attachment):
             media_attachments.append(attachment)
 
     if not media_attachments:
@@ -331,14 +353,14 @@ async def handle_media_message(message: discord.Message):
             print(f"⚠️ Failed to cache media attachment {attachment.filename}: {e}")
 
     if not stored_media:
-        print("⚠️ No image attachments could be cached for media review.")
+        print("⚠️ No media attachments could be cached for media review.")
         await bot.process_commands(message)
         return
 
     try:
         await message.delete()
     except discord.Forbidden:
-        print("⚠️ Missing permissions to delete image message.")
+        print("⚠️ Missing permissions to delete media message.")
         await bot.process_commands(message)
         return
 
@@ -389,7 +411,7 @@ async def handle_media_message(message: discord.Message):
         "author_id": message.author.id,
         "author_mention": message.author.mention,
         "text": text,
-        "images": stored_media,
+        "media": stored_media,
     }
 
 
@@ -421,8 +443,8 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
     if placeholder:
         if decision == "approved":
             files = []
-            for image in payload["images"]:
-                files.append(discord.File(io.BytesIO(image["bytes"]), filename=image["filename"]))
+            for media in payload["media"]:
+                files.append(discord.File(io.BytesIO(media["bytes"]), filename=media["filename"]))
 
             await placeholder.edit(
                 content=build_approved_media_message(payload["author_mention"], payload["text"]),
