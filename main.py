@@ -81,6 +81,11 @@ pending_media_reviews = {}
 
 PENDING_MEDIA_HEADER = "Media was attached to a message, pending moderator review."
 PENDING_MEDIA_SUBTEXT = "*If approved, this message will display the media.*"
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+VIDEO_EXTENSIONS = (
+    ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
+    ".wmv", ".flv", ".mpeg", ".mpg", ".3gp",
+)
 
 class JailedUser(Base):
     __tablename__ = 'jailed_users'
@@ -290,6 +295,30 @@ def has_media_attachments(message: discord.Message):
             return True
         if attachment.filename.lower().endswith(media_exts):
             return True
+    return False
+
+
+def is_reviewable_media_attachment(attachment: discord.Attachment):
+    content_type = (attachment.content_type or "").lower()
+    filename = attachment.filename.lower()
+    media_exts = IMAGE_EXTENSIONS + VIDEO_EXTENSIONS
+
+    if content_type.startswith("image/") or content_type.startswith("video/"):
+        return True
+
+    # Some uploads arrive as generic MIME types; catch obvious media markers.
+    if "image" in content_type or "video" in content_type:
+        return True
+
+    if filename.endswith(media_exts):
+        return True
+
+    # Fallbacks for attachments that lack content_type/extension metadata.
+    if getattr(attachment, "height", None) is not None:
+        return True
+    if getattr(attachment, "duration", None) is not None:
+        return True
+
     return False
 
 
