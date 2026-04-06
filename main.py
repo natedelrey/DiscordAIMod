@@ -283,8 +283,17 @@ async def on_message(message):
 
 
 def has_media_attachments(message: discord.Message):
+    media_exts = (
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
+    )
     for attachment in message.attachments:
-        if is_reviewable_media_attachment(attachment):
+        if attachment.content_type and (
+            attachment.content_type.startswith("image/")
+            or attachment.content_type.startswith("video/")
+        ):
+            return True
+        if attachment.filename.lower().endswith(media_exts):
             return True
     return False
 
@@ -332,7 +341,17 @@ def build_approved_media_message(author_mention: str, text: str):
 async def handle_media_message(message: discord.Message):
     media_attachments = []
     for attachment in message.attachments:
-        if is_reviewable_media_attachment(attachment):
+        if attachment.content_type and (
+            attachment.content_type.startswith("image/")
+            or attachment.content_type.startswith("video/")
+        ):
+            media_attachments.append(attachment)
+            continue
+
+        if attachment.filename.lower().endswith((
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+            ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v",
+        )):
             media_attachments.append(attachment)
 
     if not media_attachments:
