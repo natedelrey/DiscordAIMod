@@ -459,6 +459,23 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
         except (discord.NotFound, discord.Forbidden):
             placeholder = None
 
+    if decision == "disapproved_jail" and interaction.guild:
+        target_member = interaction.guild.get_member(payload["author_id"])
+        if target_member is None:
+            try:
+                target_member = await interaction.guild.fetch_member(payload["author_id"])
+            except (discord.NotFound, discord.Forbidden):
+                target_member = None
+
+        if target_member:
+            jail_role = interaction.guild.get_role(JAIL_ROLE_ID)
+            if jail_role:
+                try:
+                    await target_member.add_roles(jail_role)
+                    await add_to_jailed(str(target_member.id))
+                except discord.Forbidden:
+                    print("⚠️ Missing permission to add jail role during media review.")
+
     if placeholder:
         if decision == "approved":
             files = []
@@ -470,6 +487,12 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
                 attachments=files,
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
             )
+        elif decision == "disapproved_jail":
+            await placeholder.edit(
+                content=f"{payload['author_mention']}: Media was disapproved and you were jailed by moderators.",
+                attachments=[],
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
+            )
         else:
             await placeholder.edit(
                 content=f"{payload['author_mention']}: Media was not approved by moderators.",
@@ -477,7 +500,13 @@ async def handle_media_review_decision(interaction: discord.Interaction, decisio
                 allowed_mentions=discord.AllowedMentions(everyone=False, roles=False),
             )
 
-    status = "Approved ✅" if decision == "approved" else "Disapproved ❌"
+    if decision == "approved":
+        status = "Approved ✅"
+    elif decision == "disapproved_jail":
+        status = "Disapproved & Jailed 🚨"
+    else:
+        status = "Disapproved ❌"
+
     await message.edit(content=f"{status} by {moderator.mention}", embed=message.embeds[0] if message.embeds else None, view=None)
     await interaction.followup.send("✅ Media review updated.", ephemeral=True)
 
@@ -498,18 +527,29 @@ class MediaReviewView(discord.ui.View):
             emoji="⛔",
             custom_id="media_review:disapprove",
         )
+        disapprove_jail_button = discord.ui.Button(
+            label="Disapprove & Jail",
+            style=discord.ButtonStyle.secondary,
+            emoji="🚨",
+            custom_id="media_review:disapprove_jail",
+        )
 
         approve_button.callback = self.approve_button
         disapprove_button.callback = self.disapprove_button
+        disapprove_jail_button.callback = self.disapprove_jail_button
 
         self.add_item(approve_button)
         self.add_item(disapprove_button)
+        self.add_item(disapprove_jail_button)
 
     async def approve_button(self, interaction: discord.Interaction):
         await handle_media_review_decision(interaction, "approved")
 
     async def disapprove_button(self, interaction: discord.Interaction):
         await handle_media_review_decision(interaction, "disapproved")
+
+    async def disapprove_jail_button(self, interaction: discord.Interaction):
+        await handle_media_review_decision(interaction, "disapproved_jail")
 
 @bot.event
 async def on_member_join(member):
