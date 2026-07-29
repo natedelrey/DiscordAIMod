@@ -9,7 +9,7 @@ import asyncio
 import io
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, String, Integer, select
+from sqlalchemy import Column, String, Integer, delete, select
 
 # Load environment variables
 load_dotenv()
@@ -104,9 +104,40 @@ class ExemptUser(Base):
     __tablename__ = 'exempt_users'
     user_id = Column(String, primary_key=True)
 
+class DatabaseMigration(Base):
+    __tablename__ = 'database_migrations'
+    migration_id = Column(String, primary_key=True)
+
+
+WARNINGS_AND_JAILED_RESET_MIGRATION = "2026-07-29-reset-warnings-and-jailed-users"
+
+
+async def reset_warnings_and_jailed_users_once():
+    """Clear moderation history once, while preserving all other bot data."""
+    async with AsyncSessionLocal.begin() as session:
+        completed = await session.get(
+            DatabaseMigration,
+            WARNINGS_AND_JAILED_RESET_MIGRATION,
+        )
+        if completed:
+            return
+
+        warnings_result = await session.execute(delete(Warning))
+        jailed_result = await session.execute(delete(JailedUser))
+        session.add(DatabaseMigration(
+            migration_id=WARNINGS_AND_JAILED_RESET_MIGRATION,
+        ))
+
+        print(
+            "🧹 One-time moderation reset complete: "
+            f"removed {warnings_result.rowcount} warning records and "
+            f"{jailed_result.rowcount} jailed-user records."
+        )
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await reset_warnings_and_jailed_users_once()
 
 
 async def init_db_with_retries(retry_delay_seconds: int = 5):
@@ -141,6 +172,11 @@ async def get_warnings(user_id):
 async def set_warnings(user_id, count):
     async with AsyncSessionLocal() as session:
         obj = await session.get(Warning, user_id)
+        if count <= 0:
+            if obj:
+                await session.delete(obj)
+                await session.commit()
+            return
         if obj:
             obj.count = count
         else:
