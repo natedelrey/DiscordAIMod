@@ -1,6 +1,6 @@
 discord.py==2.3.2
 openai>=1.3.5
 python-dotenv
-sqlalchemy
+sqlalchemy[asyncio]
 asyncpg
 psycopg2-binary
