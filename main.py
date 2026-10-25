@@ -17,6 +17,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -256,7 +257,7 @@ async def moderate_message(message_content, *, lenient=False):
                 "Do not explain your decision."
             )
         response = await openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": message_content}
@@ -853,7 +854,7 @@ async def summarize(interaction: discord.Interaction, limit: int = 20):
             await interaction.response.send_message("⚠️ No messages to summarize.", ephemeral=True)
             return
         response = await openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "system", "content": "Summarize the following Discord conversation in a short, clear paragraph."},
                 {"role": "user", "content": content_to_summarize}
